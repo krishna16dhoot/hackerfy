@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hackerfy — Safe Text Transformer (Encode / Decode)</title>
+  <style>
+    :root { --bg:#0b0f12; --panel:#0f1720; --accent:#00d26a; --muted:#9aa6b2; --glass: rgba(255,255,255,0.03);}
+    body{font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial; margin:0; background:linear-gradient(180deg,#051018 0%, #07131b 100%); color:#e6eef6; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;}
+    .app{width:100%; max-width:980px; background:var(--panel); border-radius:12px; padding:18px; box-shadow:0 8px 30px rgba(0,0,0,0.6);}
+    h1{margin:0 0 8px 0; font-size:20px; color:var(--accent);}
+    .row{display:flex; gap:12px; margin-top:12px;}
+    .col{flex:1; display:flex; flex-direction:column;}
+    textarea{width:100%; min-height:140px; resize:vertical; background:var(--glass); border:1px solid rgba(255,255,255,0.04); color:inherit; padding:12px; border-radius:8px; font-family:monospace; font-size:14px;}
+    select, button{padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:inherit; font-weight:600;}
+    .controls{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+    .output{min-height:140px; background:#07131a; border-radius:8px; padding:12px; font-family:monospace; font-size:14px; white-space:pre-wrap; overflow:auto; border:1px solid rgba(0,0,0,0.5);}
+    .muted{color:var(--muted); font-size:13px;}
+    .btn-accent{background:linear-gradient(90deg,var(--accent),#00f0a0); color:#022; border:none;}
+    .small{font-size:13px; padding:8px 10px;}
+    footer{margin-top:12px; color:var(--muted); font-size:13px;}
+    .top-controls{display:flex; gap:8px; align-items:center; margin-top:8px;}
+    .kbd{background:rgba(255,255,255,0.03); border-radius:4px; padding:6px 8px; font-family:monospace;}
+  </style>
+</head>
+<body>
+  <div class="app" role="main">
+    <h1>Hackerfy — Safe Text Transformer (Encode / Decode)</h1>
+    <div class="muted">Type text on the left and pick a transform. Use the <span class="kbd">Direction</span> selector to Encode or Decode. This app is for fun/learning only — not for any hacking or intrusion.</div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="col" style="flex:1.1">
+        <label class="muted">Input</label>
+        <textarea id="input" placeholder="Type anything... e.g. h3110 or hello"></textarea>
+
+        <div class="controls" aria-hidden="false">
+          <select id="direction" title="Encode or Decode">
+            <option value="encode">Encode</option>
+            <option value="decode">Decode</option>
+          </select>
+
+          <select id="mode">
+            <option value="leet">Leet / Hacker-speak ↔ Text</option>
+            <option value="binary">Binary ↔ Text</option>
+            <option value="hex">Hexadecimal ↔ Text</option>
+            <option value="pseudo">Pseudo-code ↔ Text</option>
+            <option value="matrix">Matrix (only encode)</option>
+          </select>
+
+          <button id="convert" class="btn-accent">Run</button>
+          <button id="auto" class="small" title="Try to auto-detect and decode">Auto-detect Decode</button>
+          <button id="copy" class="small">Copy</button>
+          <button id="download" class="small">Download .txt</button>
+          <button id="clear" class="small">Clear</button>
+        </div>
+
+        <div class="top-controls muted">
+          Examples: <span style="margin-left:6px" class="kbd">h3110 → hello</span>
+          <span style="margin-left:6px" class="kbd">01101000 01101001 → hi</span>
+          <span style="margin-left:6px" class="kbd">68 65 6c 6c 6f → hello</span>
+        </div>
+      </div>
+
+      <div class="col" style="flex:1">
+        <label class="muted">Output</label>
+        <div id="output" class="output" aria-live="polite"></div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button id="randomize" class="small">Random example</button>
+          <button id="settings" class="small">Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Safe alternatives: practice encoding/decoding, learn ethical hacking legally via labs and courses. This tool does not perform any network actions.
+    </footer>
+  </div>
+
+  <script>
+    // --- Encode maps (same as before)
+    const leetEncodeMap = {
+      'a':'4','A':'4','e':'3','E':'3','i':'1','I':'1','o':'0','O':'0','s':'5','S':'5','t':'7','T':'7',
+      'l':'1','L':'1','b':'8','B':'8','g':'9','G':'9'
+    };
+
+    // --- Decode maps (numbers/symbols -> letters). Note: ambiguous mappings like '1' can mean 'l' or 'i'; we prefer 'l' for typical leet.
+    const leetDecodeMap = {
+      '4':'a','@':'a',
+      '3':'e',
+      '1':'l', // chosen to decode "h3110" -> "hello"
+      '0':'o',
+      '5':'s',
+      '7':'t',
+      '8':'b',
+      '9':'g',
+      '$':'s',
+      '+':'t',
+      '|':'l'
+    };
+
+    // --- Utility: encode/decode functions
+    function toLeet(s){
+      return s.split('').map(ch => leetEncodeMap[ch] ?? ch).join('');
+    }
+
+    function fromLeet(s){
+      // Replace common leet chars with letters (case-insensitive)
+      // We also try to handle repeated digits and mixed case.
+      let out = '';
+      for(let i=0;i<s.length;i++){
+        const ch = s[i];
+        if(leetDecodeMap[ch]) {
+          out += leetDecodeMap[ch];
+        } else if(leetDecodeMap[ch.toLowerCase()]) {
+          out += leetDecodeMap[ch.toLowerCase()];
+        } else {
+          out += ch;
+        }
+      }
+      return out;
+    }
+
+    function toBinary(s){
+      return s.split('').map(c => c.charCodeAt(0).toString(2).padStart(8,'0')).join(' ');
+    }
+
+    function fromBinary(s){
+      // Accept space-separated bytes or continuous stream.
+      const cleaned = s.trim().replace(/[^01\s]/g,''); // remove non-binary chars
+      if(cleaned.indexOf(' ') >= 0){
+        const parts = cleaned.split(/\s+/).filter(Boolean);
+        return parts.map(b => String.fromCharCode(parseInt(b,2))).join('');
+      } else {
+        // continuous stream: split into 8-bit groups (if length is multiple of 8)
+        const only = cleaned;
+        if(only.length % 8 !== 0){
+          // try to pad front with zeros (if user omitted leading zeros)
+          const remainder = only.length % 8;
+          const pad = 8 - remainder;
+          const padded = '0'.repeat(pad) + only;
+          return padded.match(/.{1,8}/g).map(b => String.fromCharCode(parseInt(b,2))).join('');
+        }
+        return only.match(/.{1,8}/g).map(b => String.fromCharCode(parseInt(b,2))).join('');
+      }
+    }
+
+    function toHex(s){
+      return s.split('').map(c => c.charCodeAt(0).toString(16).padStart(2,'0')).join(' ');
+    }
+
+    function fromHex(s){
+      // Accept space-separated hex or continuous stream like 68656c6c6f
+      const cleaned = s.trim().replace(/[^0-9a-fA-F]/g,'');
+      if(cleaned.length === 0) return '';
+      if(cleaned.indexOf(' ') >= 0) {
+        // handled above by removing spaces, but in case spaces remained:
+      }
+      // if odd length, assume missing leading zero for first nibble -> pad start
+      const hex = cleaned.length % 2 === 1 ? '0' + cleaned : cleaned;
+      const bytes = hex.match(/.{1,2}/g) ?? [];
+      return bytes.map(h => String.fromCharCode(parseInt(h,16))).join('');
+    }
+
+    function toPseudo(s){
+      const words = s.split(/\s+/).filter(Boolean);
+      if(words.length===0) return '';
+      return words.map((w,i) => `func_${i}("${w.replace(/"/g,'\\"')}"); // -> ${w.length} chars`).join('\\n');
+    }
+
+    function fromPseudo(s){
+      // Extract strings inside quotes: func_0("hello"); // -> 5 chars  => output: hello
+      const matches = [...s.matchAll(/"([^"]*)"/g)];
+      if(matches.length){
+        return matches.map(m => m[1]).join(' ');
+      }
+      // Fallback: try to strip func_n(...) types to words
+      const tryWords = s.replace(/func_\\d+\\(/g,'').replace(/[();\\/\\->#]/g,' ').replace(/"/g,'').trim();
+      if(tryWords) return tryWords.split(/\\s+/).filter(Boolean).join(' ');
+      return '';
+    }
+
+    function toMatrix(s){
+      const chars = '01XYZ@#$%&*?<>/[]{}()';
+      const len = Math.max(10, s.length*6);
+      let out = '';
+      for(let i=0;i<Math.min(10, Math.ceil(len/20)); i++){
+        let line='';
+        for(let j=0;j<len/ (i+1); j++){
+          line += chars[Math.floor(Math.random()*chars.length)];
+        }
+        out += line + '\\n';
+      }
+      return out.trim();
+    }
+
+    // --- UI wiring
+    const inputEl = document.getElementById('input');
+    const outputEl = document.getElementById('output');
+    const modeEl = document.getElementById('mode');
+    const directionEl = document.getElementById('direction');
+    const convertBtn = document.getElementById('convert');
+    const autoBtn = document.getElementById('auto');
+    const copyBtn = document.getElementById('copy');
+    const downloadBtn = document.getElementById('download');
+    const clearBtn = document.getElementById('clear');
+    const randomBtn = document.getElementById('randomize');
+
+    function transformText(){
+      const txt = inputEl.value || '';
+      const mode = modeEl.value;
+      const dir = directionEl.value; // encode | decode
+      let out = '';
+
+      if(dir === 'encode'){
+        switch(mode){
+          case 'leet': out = toLeet(txt); break;
+          case 'binary': out = toBinary(txt); break;
+          case 'hex': out = toHex(txt); break;
+          case 'pseudo': out = toPseudo(txt); break;
+          case 'matrix': out = toMatrix(txt || 'matrix'); break;
+          default: out = txt;
+        }
+      } else { // decode
+        switch(mode){
+          case 'leet': out = fromLeet(txt); break;
+          case 'binary':
+            try { out = fromBinary(txt); } catch(e){ out = 'Invalid binary input'; }
+            break;
+          case 'hex':
+            try { out = fromHex(txt); } catch(e){ out = 'Invalid hex input'; }
+            break;
+          case 'pseudo': out = fromPseudo(txt); break;
+          case 'matrix': out = 'Matrix output cannot be reliably decoded.'; break;
+          default: out = txt;
+        }
+      }
+
+      outputEl.textContent = out;
+    }
+
+    convertBtn.addEventListener('click', transformText);
+
+    autoBtn.addEventListener('click', ()=>{
+      // Try to detect the type automatically and decode.
+      const s = (inputEl.value || '').trim();
+      if(!s){ outputEl.textContent = ''; return; }
+
+      // Heuristics:
+      // - if contains only 0/1 and spaces and length large → binary
+      // - if contains only hex chars (0-9a-f) and length even/space-separated → hex
+      // - if contains digits like 3,1,0 and letters -> likely leet
+      // - if contains func_ or quotes -> pseudo
+      const onlyBin = /^[01\s]+$/.test(s);
+      const hasFunc = /func_\\d+\\(|"[^"]+"/.test(s);
+      const onlyHex = /^[0-9a-fA-F\s]+$/.test(s) && /[0-9a-fA-F]/.test(s);
+      const looksLeet = /[01345789$@+|]/.test(s) && /[a-zA-Z]/.test(s);
+      const continuousHex = /^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0 && s.length > 2;
+
+      let detected = null;
+      if(onlyBin && s.replace(/\\s/g,'').length >= 8) detected = 'binary';
+      else if(hasFunc) detected = 'pseudo';
+      else if((onlyHex && s.indexOf(' ')>=0) || continuousHex) detected = 'hex';
+      else if(looksLeet) detected = 'leet';
+      else {
+        // fallback: prefer leet if contains digits mixed with letters
+        if (/[0-9]/.test(s) && /[a-zA-Z]/.test(s)) detected = 'leet';
+      }
+
+      if(detected){
+        directionEl.value = 'decode';
+        modeEl.value = detected;
+        transformText();
+      } else {
+        outputEl.textContent = 'Could not auto-detect format. Try selecting a mode (Leet, Binary, Hex, Pseudo).';
+      }
+    });
+
+    copyBtn.addEventListener('click', ()=>{
+      navigator.clipboard?.writeText(outputEl.textContent || '').then(()=>{
+        copyBtn.textContent = 'Copied ✓';
+        setTimeout(()=>copyBtn.textContent='Copy',900);
+      }).catch(()=>{ alert('Copy not supported in this browser.'); });
+    });
+
+    downloadBtn.addEventListener('click', ()=>{
+      const data = outputEl.textContent || '';
+      const blob = new Blob([data], {type:'text/plain;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'hackerfy_output.txt';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    clearBtn.addEventListener('click', ()=>{ inputEl.value=''; outputEl.textContent=''; });
+
+    randomBtn.addEventListener('click', ()=>{
+      const examples = [
+        'the quick brown fox',
+        'hello world 123',
+        'h3110', // leet example
+        '01101000 01101001', // binary hi
+        '68 65 6c 6c 6f', // hex hello
+        'func_0("secret"); // -> 6 chars' // pseudo-ish
+      ];
+      inputEl.value = examples[Math.floor(Math.random()*examples.length)];
+      // default to decode when examples look encoded
+      autoBtn.click();
+    });
+
+    // initial demo
+    inputEl.value = 'h3110';
+    directionEl.value = 'decode';
+    modeEl.value = 'leet';
+    transformText();
+  </script>
+</body>
+</html>
