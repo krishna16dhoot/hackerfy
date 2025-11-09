@@ -1,56 +1,145 @@
 <html>
 <head>
-<meta charset="UTF-8">
-<title>Hackerfy</title>
+<meta charset="utf-8">
+<title>Hackerfy — Encoder</title>
 <style>
-body{margin:0;background:black;color:#0f0;font-family:monospace;overflow:hidden}
-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0}
-#term{position:relative;z-index:1;padding:20px}
-input{width:80%;background:transparent;border:none;color:#0f0;font-family:inherit;outline:none}
+  body{margin:0;background:#000;color:#0f0;font-family:monospace;overflow:auto}
+  canvas{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+  .wrap{position:relative;z-index:1;padding:22px;max-width:960px;margin:20px auto}
+  .term{background:rgba(0,0,0,0.6);border-radius:8px;padding:14px;border:1px solid rgba(0,255,0,0.06)}
+  #out{white-space:pre-wrap;min-height:90px}
+  input,textarea,button{background:transparent;border:1px solid rgba(0,255,0,0.06);color:#bfffcf;padding:8px;border-radius:6px;font-family:inherit}
+  textarea{width:100%;height:80px;margin:6px 0}
+  .row{display:flex;gap:8px;align-items:center}
+  .btn{cursor:pointer}
+  @media(max-width:600px){.row{flex-direction:column;align-items:stretch}}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="term">
-<pre id="out">HACKERFY v1.0
-type "help" for commands
-</pre>
-$ <input id="in" autofocus>
+<div class="wrap">
+  <div class="term">
+    <div id="out">HACKERFY v2.0 — type "help" for commands
 </div>
-<script>
-const c=document.getElementById("c"),ctx=c.getContext("2d");
-c.width=innerWidth;c.height=innerHeight;
-const chars="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const drops=Array(Math.floor(c.width/14)).fill(1);
-function draw(){
-ctx.fillStyle="rgba(0,0,0,0.05)";
-ctx.fillRect(0,0,c.width,c.height);
-ctx.fillStyle="#0f0";
-drops.forEach((y,i)=>{
-const text=chars[Math.floor(Math.random()*chars.length)];
-ctx.fillText(text,i*14,y*14);
-if(y*14>c.height&&Math.random()>0.975)drops[i]=0;
-drops[i]++;
-});
-}
-setInterval(draw,40);
+    <div class="row" style="margin-top:8px;">
+      $ <input id="cmd" style="flex:1" placeholder='commands: encode <text>, decode <code>, help, clear' />
+    </div>
+  </div>
 
-const out=document.getElementById("out");
-const input=document.getElementById("in");
-input.addEventListener("keydown",e=>{
-if(e.key==="Enter"){
-let cmd=input.value.trim();
-out.textContent+="$ "+cmd+"\\n";
-if(cmd==="help")out.textContent+="help, about, scan, clear, echo <text>\\n";
-else if(cmd==="about")out.textContent+="Hackerfy by Krishna\\n";
-else if(cmd==="scan")out.textContent+="Scanning... host 192.168.0.2 found!\\nDone.\\n";
-else if(cmd.startsWith("echo "))out.textContent+=cmd.slice(5)+"\\n";
-else if(cmd==="clear")out.textContent="HACKERFY v1.0\\n";
-else out.textContent+="Unknown command\\n";
-input.value="";
-window.scrollTo(0,document.body.scrollHeight);
+  <div style="height:12px;"></div>
+
+  <div class="term">
+    <div style="font-weight:700;margin-bottom:6px">Translator UI</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:13px;opacity:0.8">Normal → Code</div>
+        <textarea id="plain" placeholder="Type plain text here..."></textarea>
+        <div class="row"><button class="btn" id="encodeBtn">Encode</button><button class="btn" id="copyCode">Copy Code</button></div>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:13px;opacity:0.8">Code → Normal</div>
+        <textarea id="code" placeholder="Encoded text appears here..."></textarea>
+        <div class="row"><button class="btn" id="decodeBtn">Decode</button><button class="btn" id="copyPlain">Copy Plain</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* matrix background (light) */
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; ctx.font="14px monospace"; }
+addEventListener('resize', resize); resize();
+const chars = "01ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const cols = () => Math.floor(canvas.width / 14);
+let drops = Array(cols()).fill(1);
+function step(){
+  ctx.fillStyle = "rgba(0,0,0,0.06)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = "rgba(150,255,150,0.9)";
+  for(let i=0;i<drops.length;i++){
+    const txt = chars[Math.floor(Math.random()*chars.length)];
+    ctx.fillText(txt, i*14, drops[i]*14);
+    if(drops[i]*14 > canvas.height && Math.random()>0.98) drops[i]=0;
+    drops[i]++;
+  }
 }
+setInterval(()=>{ if(drops.length !== cols()) drops = Array(cols()).fill(1); step(); }, 45);
+
+/* encoding strategy:
+   1) UTF-8 → base64 (safe reversible)
+   2) apply a deterministic "leet" substitution to make it look hackerish
+   Reverse does leet->base64->utf8
+*/
+const leetMap = {
+  'A':'4','a':'4','E':'3','e':'3','I':'1','i':'1','O':'0','o':'0','S':'5','s':'5','T':'7','t':'7',
+  '+':'-','/':'~','=':'_' // make base64 chars friendlier
+};
+const revLeet = {};
+for(const k in leetMap) revLeet[leetMap[k]] = k;
+
+/* safe base64 UTF-8 helpers */
+function utf8ToB64(str){
+  try{ return btoa(unescape(encodeURIComponent(str))); }
+  catch(e){ return btoa(str); }
+}
+function b64ToUtf8(b64){
+  try{ return decodeURIComponent(escape(atob(b64))); }
+  catch(e){ return atob(b64); }
+}
+
+function applyLeet(s){
+  return s.split('').map(ch => leetMap[ch] !== undefined ? leetMap[ch] : ch).join('');
+}
+function undoLeet(s){
+  // reverse: replace each leet token with original char if exists (single-char map)
+  return s.split('').map(ch => revLeet[ch] !== undefined ? revLeet[ch] : ch).join('');
+}
+
+function encodeText(plain){
+  if(!plain) return '';
+  const b64 = utf8ToB64(plain);
+  return applyLeet(b64);
+}
+function decodeText(code){
+  if(!code) return '';
+  const fixed = undoLeet(code);
+  try{ return b64ToUtf8(fixed); }
+  catch(e){ return '[decode error: not valid code]'; }
+}
+
+/* Terminal handlers */
+const out = document.getElementById('out'), cmd = document.getElementById('cmd');
+function append(s){ out.textContent += s + '\n'; out.scrollTop = out.scrollHeight; }
+append('ready.');
+
+cmd.addEventListener('keydown', e=>{
+  if(e.key !== 'Enter') return;
+  const val = cmd.value.trim(); if(!val) return;
+  append('$ ' + val);
+  const parts = val.split(' ');
+  const c = parts[0].toLowerCase();
+  const arg = parts.slice(1).join(' ');
+  if(c === 'help'){
+    append('commands: encode <text>, decode <code>, help, clear');
+  } else if(c === 'encode'){
+    append(encodeText(arg) || '[no input]');
+  } else if(c === 'decode'){
+    append(decodeText(arg) || '[no input]');
+  } else if(c === 'clear'){
+    out.textContent = 'HACKERFY v2.0 — type \"help\" for commands\n';
+  } else {
+    append('unknown command');
+  }
+  cmd.value = '';
 });
+
+/* UI handlers */
+const plain = document.getElementById('plain'), code = document.getElementById('code');
+document.getElementById('encodeBtn').addEventListener('click', ()=>{ code.value = encodeText(plain.value); });
+document.getElementById('decodeBtn').addEventListener('click', ()=>{ plain.value = decodeText(code.value); });
+document.getElementById('copyCode').addEventListener('click', ()=>{ navigator.clipboard?.writeText(code.value||''); });
+document.getElementById('copyPlain').addEventListener('click', ()=>{ navigator.clipboard?.writeText(plain.value||''); });
+
 </script>
 </body>
 </html>
